@@ -1,0 +1,328 @@
+/**
+ * The major open-source (or open-source-compatible) building blocks that show up
+ * on a system design whiteboard, with an honest, opinionated pros/cons and one
+ * concrete "use it when" example each — not a feature matrix. Pure reference
+ * content: imported directly by web/src, no API round trip needed.
+ */
+
+export type ToolCategory = 'database' | 'queue' | 'cache' | 'infra';
+
+export interface ToolEntry {
+  slug: string;
+  name: string;
+  category: ToolCategory;
+  whatItIs: string;
+  goodAt: string[];
+  badAt: string[];
+  operationalCost: string;
+  useWhen: string;
+  /** A real, named company/project actually running this — not a hypothetical scenario. */
+  realWorldExample: string;
+}
+
+export const CATEGORY_LABELS: Record<ToolCategory, string> = {
+  database: 'Databases',
+  queue: 'Queues & streams',
+  cache: 'Caches',
+  infra: 'Everything else',
+};
+
+export const TOOLS: ToolEntry[] = [
+  // ---------------------------------------------------------------- databases
+  {
+    slug: 'postgresql',
+    name: 'PostgreSQL',
+    category: 'database',
+    whatItIs: 'The default general-purpose relational database: full SQL, ACID transactions, and a large extension ecosystem (PostGIS, pgvector).',
+    goodAt: ['Transactional integrity and complex joins/queries', 'A genuinely general-purpose default when you\'re not sure yet', 'JSON columns when you need a little schema flexibility without leaving SQL'],
+    badAt: ['Horizontal write scaling (single-writer by default)', 'Extremely wide-row scans across huge tables without careful indexing/partitioning'],
+    operationalCost: 'Moderate: needs backup/restore, autovacuum tuning at scale, and connection pooling (PgBouncer) once connection counts climb.',
+    useWhen: 'An e-commerce order system, where relational integrity (an order references a real customer and real line items) and multi-row transactions genuinely matter.',
+    realWorldExample: "Instagram's 2012 engineering blog post \"Sharding & IDs at Instagram\" describes running their entire early user graph on sharded PostgreSQL — built specifically because they needed real transactions and joins, not just key lookups.",
+  },
+  {
+    slug: 'mysql',
+    name: 'MySQL',
+    category: 'database',
+    whatItIs: 'The other default relational database: enormous ecosystem and hosting support, simple binlog-based replication.',
+    goodAt: ['Read replicas via binlog replication', 'Extremely well-understood ops at massive install-base scale', 'Simple OLTP workloads'],
+    badAt: ['Historically weaker JSON/window-function support than Postgres (narrowing over versions)', 'Default isolation-level gotchas (gap locks, statement-based replication edge cases) that surprise people'],
+    operationalCost: 'Low-moderate — extremely well-documented, huge community, easy to hire for.',
+    useWhen: 'A standard CRUD web backend (the LAMP-stack shape) where you want the most common, most-hosted relational option.',
+    realWorldExample: "Meta still runs a large share of its core social-graph data on MySQL at enormous scale, and built its own storage engine, MyRocks, specifically to keep MySQL efficient at that size — documented on Meta's own engineering blog.",
+  },
+  {
+    slug: 'mongodb',
+    name: 'MongoDB',
+    category: 'database',
+    whatItIs: 'A document database: flexible, schema-less JSON-like documents, with built-in horizontal sharding.',
+    goodAt: ['Rapidly evolving or heterogeneous document shapes', 'Horizontal scale via built-in sharding', 'Natural fit for nested, denormalized data you read as a whole document'],
+    badAt: ['Multi-document transactions are costlier than a relational DB\'s (better since 4.0, still not free)', 'Joins across collections are awkward and slow — you denormalize instead'],
+    operationalCost: 'Moderate — needs careful index design or full collection scans creep in as data grows.',
+    useWhen: 'A product catalog where different product categories have wildly different attributes and you don\'t want a sparse relational schema.',
+    realWorldExample: "eBay's own engineering blog describes running its product catalog on a MongoDB replica set scaled out to 50 members, specifically for the read-heavy, highly-available access pattern a catalog needs.",
+  },
+  {
+    slug: 'cassandra',
+    name: 'Cassandra',
+    category: 'database',
+    whatItIs: 'A leaderless, wide-column store built for massive write throughput and multi-datacenter replication with no single point of failure.',
+    goodAt: ['Very high, linearly-scaling write throughput', 'Multi-datacenter replication with no leader to fail over', 'Tunable consistency per operation'],
+    badAt: ['No joins, and queries not matching your partition key design require a full scan', 'Unforgiving: a bad partition key choice is very expensive to fix later'],
+    operationalCost: 'High — compaction, anti-entropy repair, and partition key design all need real expertise.',
+    useWhen: 'An IoT/sensor ingestion pipeline writing millions of time-stamped events per second across multiple regions.',
+    realWorldExample: 'Netflix runs some of the largest Cassandra deployments in the world — thousands of nodes across regions — for viewing history and account data, and has published extensively about the operational lessons on the Netflix Tech Blog.',
+  },
+  {
+    slug: 'dynamodb',
+    name: 'DynamoDB (and DynamoDB-alikes)',
+    category: 'database',
+    whatItIs: 'A fully managed key-value / wide-column store with single-digit-millisecond latency at any scale and zero server management.',
+    goodAt: ['Predictable low latency at massive scale with no ops team', 'Native change-data-capture via Streams', 'Scaling up and down automatically'],
+    badAt: ['Query flexibility — you must design your access patterns (partition/sort keys) up front', 'Costs that can spike unexpectedly under bursty or poorly-modeled access patterns', 'Vendor lock-in'],
+    operationalCost: 'Low ops burden, but the billing model (pay-per-request or provisioned capacity) needs active cost management.',
+    useWhen: 'A URL shortener or session store: predictable single-key lookups at huge scale, with no dedicated database team.',
+    realWorldExample: "DynamoDB's design descends directly from Amazon's internal Dynamo system, built originally to keep the retail shopping cart available even during a partial data-center failure — described in Amazon's own 2007 Dynamo paper.",
+  },
+  {
+    slug: 'cockroachdb',
+    name: 'CockroachDB',
+    category: 'database',
+    whatItIs: 'A distributed SQL database that is strongly consistent (Raft consensus per data range) and wire-compatible with PostgreSQL.',
+    goodAt: ['Horizontal scale WITHOUT giving up ACID transactions and SQL joins', 'Surviving a node or whole availability zone failure automatically'],
+    badAt: ['Write latency is higher than a single-node Postgres (consensus has a cost)', 'Needs a minimum of 3 nodes for quorum — more baseline infrastructure than a single database server'],
+    operationalCost: 'Moderate-high: at least 3 nodes, and multi-region topologies need real planning.',
+    useWhen: 'A financial ledger that needs both relational transactions/joins AND to survive a full region outage without manual failover.',
+    realWorldExample: "CockroachDB was built by ex-Google engineers specifically to bring Google's internal Spanner (globally-consistent SQL) ideas to an open-source database anyone could run.",
+  },
+  {
+    slug: 'clickhouse',
+    name: 'ClickHouse',
+    category: 'database',
+    whatItIs: 'A columnar OLAP database built for extremely fast aggregate queries (GROUP BY, COUNT, AVG) over billions of rows.',
+    goodAt: ['Real-time analytics dashboards over huge event volumes', 'Aggregation queries that would take minutes in a row-store database'],
+    badAt: ['Point lookups and single-row updates (not an OLTP database)', 'No real transactions; deletes and updates are comparatively expensive'],
+    operationalCost: 'Moderate — needs planning for its replication/sharding (distributed tables), but simpler than a Spark cluster for the same aggregation.',
+    useWhen: 'A real-time analytics dashboard aggregating billions of clickstream or log events per day.',
+    realWorldExample: 'ClickHouse was built inside Yandex (the largest search engine in Russia) to power real-time analytics over its own web-traffic logs — the literal reason the project exists.',
+  },
+  {
+    slug: 'elasticsearch',
+    name: 'Elasticsearch',
+    category: 'database',
+    whatItIs: 'A distributed inverted-index search engine: near-real-time full-text search plus aggregations, built on Lucene.',
+    goodAt: ['Full-text search with relevance ranking and typo tolerance', 'Faceted/filtered search', 'Centralized log search (the "E" in the ELK stack)'],
+    badAt: ['Being a system of record — it\'s not ACID and reindexing is a normal operational fact of life', 'Memory/JVM heap tuning at scale'],
+    operationalCost: 'High — shard management, JVM tuning, and it becomes a second datastore you must keep in sync with your source of truth.',
+    useWhen: 'Product search on an e-commerce site: typo-tolerant, filterable, ranked search that a relational LIKE query can\'t do well.',
+    realWorldExample: "GitHub's code search ran on a large Elasticsearch cluster for years — documented in a 2013 case study — before their scale eventually pushed them to build a custom search engine of their own.",
+  },
+  {
+    slug: 'neo4j',
+    name: 'Neo4j',
+    category: 'database',
+    whatItIs: 'A native graph database, optimized for multi-hop relationship traversals that would need many joins in a relational database.',
+    goodAt: ['Friend-of-friend / recommendation-graph queries', 'Fraud-ring and relationship-pattern detection'],
+    badAt: ['Bulk analytical scans over the whole dataset', 'Horizontal write scaling — historically closer to single-writer than a sharded store'],
+    operationalCost: 'Moderate, plus a specialized query language (Cypher) and commercial licensing for clustering features.',
+    useWhen: 'A social network\'s "people you may know," or a fraud-detection system finding rings of connected accounts.',
+    realWorldExample: "NASA's Jet Propulsion Laboratory uses Neo4j to store its \"lessons learned\" knowledge graph — engineers working on the Orion spacecraft's uprighting system used it to surface a relevant, decades-old Apollo-era lesson.",
+  },
+  {
+    slug: 'sqlite',
+    name: 'SQLite',
+    category: 'database',
+    whatItIs: 'An embedded, serverless, single-file relational database — no server process, no network round trip.',
+    goodAt: ['Zero-ops embedded storage: mobile apps, desktop apps, CLI tools, local caches', 'Simplicity — one file, no daemon to run'],
+    badAt: ['Concurrent writers (effectively a single writer lock)', 'Being the backend for a multi-server web application'],
+    operationalCost: 'Essentially free — there is no server to operate.',
+    useWhen: 'A mobile app\'s local offline data store, or any single-process tool that needs real SQL without running a database server.',
+    realWorldExample: 'SQLite ships inside the operating system of essentially every Android and iOS device as the default embedded database for local app storage — you likely have dozens of copies of it running on your phone right now.',
+  },
+
+  // ---------------------------------------------------------------- queues/streams
+  {
+    slug: 'kafka',
+    name: 'Kafka',
+    category: 'queue',
+    whatItIs: 'A distributed, partitioned commit log: high-throughput publish/subscribe with retention-based storage, so consumers can replay history.',
+    goodAt: ['Massive sustained throughput', 'Replaying/reprocessing history, not just delivering once', 'Fanning one write out to many independent downstream consumers'],
+    badAt: ['Low-latency point-to-point request/reply', 'Being a simple task queue — the operational overhead is overkill for that'],
+    operationalCost: 'High: brokers, partition planning, consumer-group rebalancing, and (pre-KRaft) ZooKeeper are real operational surface area.',
+    useWhen: 'An event-sourcing backbone where one write (a new order) needs to feed several independent consumers: analytics, search indexing, notifications.',
+    realWorldExample: "Kafka was built inside LinkedIn to handle its activity-stream and operational-metrics pipeline, at a throughput the message queues available at the time couldn't sustain.",
+  },
+  {
+    slug: 'rabbitmq',
+    name: 'RabbitMQ',
+    category: 'queue',
+    whatItIs: 'A traditional message broker with flexible routing (exchanges and bindings), per-message acknowledgment, and moderate throughput.',
+    goodAt: ['Complex routing rules (route by type, priority queues, delayed messages)', 'Simpler operations than Kafka at moderate throughput'],
+    badAt: ['Replaying history the way Kafka does — messages are gone once consumed by default', 'Kafka-scale sustained throughput'],
+    operationalCost: 'Moderate — well-documented, easier to reason about for a single team\'s task-queue needs.',
+    useWhen: 'A background job queue for a web app that needs routing rules (route by job type or priority), not just a flat FIFO.',
+    realWorldExample: 'RabbitMQ is the default, recommended broker behind Celery, the most widely used background-task queue in the Python ecosystem — most Django/Flask apps with a task queue are running RabbitMQ (or Redis) underneath it.',
+  },
+  {
+    slug: 'nats',
+    name: 'NATS',
+    category: 'queue',
+    whatItIs: 'A lightweight, extremely fast pub/sub messaging system; JetStream adds persistence and stream semantics on top.',
+    goodAt: ['Low-latency service-to-service messaging in a microservices mesh', 'Simple request/reply patterns', 'Trivial to run — a single small binary'],
+    badAt: ['The maturity of Kafka/RabbitMQ\'s tooling and ecosystem for complex stream processing'],
+    operationalCost: 'Low — minimal operational footprint compared to Kafka or RabbitMQ.',
+    useWhen: 'Service-to-service pub/sub inside a microservices deployment where Kafka would be more operational weight than the problem needs.',
+    realWorldExample: "NATS was built by Derek Collison as the messaging control plane inside Cloud Foundry, VMware's platform-as-a-service — it's been carrying production PaaS traffic since 2010.",
+  },
+  {
+    slug: 'redis-streams',
+    name: 'Redis Streams',
+    category: 'queue',
+    whatItIs: 'An append-only log data structure built into Redis, with consumer groups — a lightweight streaming primitive if you already run Redis.',
+    goodAt: ['Low-latency event streaming at small-to-moderate scale', 'Zero extra infrastructure if Redis is already in your stack'],
+    badAt: ['Kafka-scale retention and throughput', 'Durability guarantees as strong as Kafka\'s without careful persistence/clustering configuration'],
+    operationalCost: 'Low if Redis is already present; otherwise you\'re standing up Redis just for this.',
+    useWhen: 'A small-scale activity feed or job queue where adding a whole Kafka cluster would be disproportionate.',
+    realWorldExample: "Redis added Streams in version 5.0 specifically so the huge number of teams already running Redis for caching could get basic append-log/consumer-group semantics without standing up a separate Kafka cluster.",
+  },
+  {
+    slug: 'pulsar',
+    name: 'Apache Pulsar',
+    category: 'queue',
+    whatItIs: 'A Kafka-like pub/sub system with built-in multi-tenancy and tiered storage that separates the compute (brokers) from the storage (BookKeeper).',
+    goodAt: ['Multi-tenant SaaS event streaming with per-tenant isolation', 'Effectively infinite retention via tiered storage to object storage', 'Built-in geo-replication'],
+    badAt: ['Ecosystem and community size compared to Kafka', 'Operational surface area — it\'s two subsystems (brokers + BookKeeper), not one'],
+    operationalCost: 'High — more moving parts than Kafka, though each part is individually simpler to reason about.',
+    useWhen: 'A multi-tenant SaaS platform that needs per-tenant stream isolation and long retention without broker disk ballooning.',
+    realWorldExample: 'Pulsar was built inside Yahoo to replace several earlier internal messaging systems with one that could serve many teams (multi-tenancy) on shared infrastructure — Yahoo Japan has separately documented running its own large-scale Pulsar deployment.',
+  },
+  {
+    slug: 'sqs',
+    name: 'SQS (and SQS-alikes)',
+    category: 'queue',
+    whatItIs: 'A fully managed, at-least-once-delivery queue with effectively zero infrastructure to run.',
+    goodAt: ['Decoupling a request from slow background work with zero ops', 'Scaling automatically with load'],
+    badAt: ['Strict ordering by default (standard queues) — FIFO queues trade throughput for that', 'Message replay and the routing flexibility RabbitMQ offers'],
+    operationalCost: 'Very low — pay-per-request, no servers to manage.',
+    useWhen: 'Decoupling a web request from slow background work (image processing, sending an email) with no dedicated infrastructure team.',
+    realWorldExample: "SQS is one of AWS's original launch services (2006) and is the default answer in AWS's own Well-Architected Framework for decoupling a web request from slower background work.",
+  },
+
+  // ---------------------------------------------------------------- caches
+  {
+    slug: 'redis',
+    name: 'Redis',
+    category: 'cache',
+    whatItIs: 'An in-memory data structure store: sub-millisecond latency, rich types (lists, sets, sorted sets, HyperLogLog), optional persistence.',
+    goodAt: ['General caching', 'Rate-limiting counters', 'Real-time leaderboards via sorted sets', 'Session stores and simple pub/sub'],
+    badAt: ['Datasets that don\'t fit in memory (needs eviction or a different store)', 'A single slow command blocking others (its core is single-threaded)'],
+    operationalCost: 'Memory is the expensive resource here; needs an eviction policy tuned to the workload.',
+    useWhen: 'Caching hot rows in front of a primary datastore, or building a real-time leaderboard with a sorted set.',
+    realWorldExample: "GitHub built Resque, one of the most widely copied background-job systems, directly on top of Redis's list operations — a pattern later reimplemented for Node, PHP, and Perl.",
+  },
+  {
+    slug: 'memcached',
+    name: 'Memcached',
+    category: 'cache',
+    whatItIs: 'A simple, multi-threaded, in-memory key-value cache with minimal overhead.',
+    goodAt: ['Pure caching at very large scale with minimal per-node overhead', 'Simplicity — there is very little to configure'],
+    badAt: ['Persistence (there is none)', 'Rich data structures (it\'s a flat key-value store)', 'Server-side replication (sharding is client-side only)'],
+    operationalCost: 'Very low — about as simple as a cache gets to operate.',
+    useWhen: 'A large-scale HTML-fragment or session cache where you don\'t need any of Redis\'s extra data structures or persistence.',
+    realWorldExample: 'Memcached was created at LiveJournal and later scaled to legendary size at Facebook, whose 2013 paper "Scaling Memcache at Facebook" (cited in this app\'s caching-strategies concept) remains the canonical write-up on running it at massive scale.',
+  },
+
+  // ---------------------------------------------------------------- infra
+  {
+    slug: 'nginx-envoy',
+    name: 'nginx / Envoy',
+    category: 'infra',
+    whatItIs: 'Reverse proxies and load balancers. nginx is the mature, simple, extremely fast classic; Envoy is the modern, dynamically-configured proxy built for service meshes.',
+    goodAt: ['nginx: TLS termination and reverse-proxying with rock-solid performance and simple config', 'Envoy: dynamic configuration (xDS), deep per-request observability, and being the standard service-mesh sidecar (Istio)'],
+    badAt: ['nginx: dynamic reconfiguration is clunkier — a reload is usually needed', 'Envoy: more resource overhead per instance/sidecar, and a steeper config model'],
+    operationalCost: 'Low (nginx) to moderate (Envoy, especially as a sidecar per service in a mesh).',
+    useWhen: 'nginx in front of a conventional app-server fleet; Envoy when you need per-request routing, retries, and observability between microservices in a mesh.',
+    realWorldExample: "Envoy was built at Lyft specifically to help move their monolith to a microservices architecture, and now underpins most service meshes (Istio) industry-wide — documented on Lyft's own engineering blog.",
+  },
+  {
+    slug: 'consul-etcd',
+    name: 'Consul / etcd',
+    category: 'infra',
+    whatItIs: 'Distributed coordination services (both built on Raft): service discovery, a small distributed key-value store, distributed locks, and leader election.',
+    goodAt: ['Service registration, discovery, and health checking', 'Distributed locks and leader election', 'Small, frequently-read configuration'],
+    badAt: ['Being a general-purpose database — values are meant to be small, not bulk data', 'High write throughput (etcd in particular has a fairly low write ceiling by design)'],
+    operationalCost: 'Moderate — a real cluster needs 3-5 nodes for quorum and its own operational care.',
+    useWhen: 'etcd underpins Kubernetes\' own control-plane state; Consul for service discovery and health checking in a non-Kubernetes microservices deployment.',
+    realWorldExample: "etcd stores the entire cluster state of every single Kubernetes cluster in existence — if etcd goes down, the Kubernetes control plane can't make any scheduling decisions at all.",
+  },
+  {
+    slug: 'zookeeper',
+    name: 'ZooKeeper',
+    category: 'infra',
+    whatItIs: 'The older JVM-ecosystem coordination service — the original home of leader election and distributed config for systems like Kafka and Hadoop.',
+    goodAt: ['Proven, battle-tested coordination for JVM-ecosystem systems that already depend on it'],
+    badAt: ['A clunkier API than etcd/Consul for new designs', 'Being actively phased out even by its most famous consumer (Kafka\'s KRaft mode removes the ZooKeeper dependency)'],
+    operationalCost: 'Moderate — another JVM service to run and tune.',
+    useWhen: 'Legacy or Hadoop-ecosystem systems that already depend on it — new designs today generally reach for etcd or Consul instead.',
+    realWorldExample: "ZooKeeper coordinated cluster membership and leader election for every Kafka deployment for over a decade, before Kafka's newer KRaft mode finally removed the dependency.",
+  },
+  {
+    slug: 'minio-s3',
+    name: 'MinIO / S3-alikes',
+    category: 'infra',
+    whatItIs: 'S3-compatible object storage: cheap, durable, effectively-infinite storage for blobs and files, self-hostable (MinIO) or managed (S3).',
+    goodAt: ['Storing user-uploaded files, images, video, and backups cheaply and durably', 'Serving as the origin behind a CDN'],
+    badAt: ['Being a filesystem — no real directories or in-place random-write files', 'Listing operations over huge buckets, and per-request latency vs. local disk'],
+    operationalCost: 'Very cheap per GB stored; egress bandwidth is usually the line item that actually costs money.',
+    useWhen: 'Storing user-uploaded images or videos, or as the cold-tier origin sitting behind a CDN.',
+    realWorldExample: "S3 was AWS's first-ever public service (2006), and Netflix's entire video catalog is famously stored on S3-compatible infrastructure behind their own purpose-built CDN, Open Connect.",
+  },
+  {
+    slug: 'prometheus-grafana',
+    name: 'Prometheus / Grafana',
+    category: 'infra',
+    whatItIs: 'The standard open-source metrics stack: a pull-based time-series database (Prometheus) plus dashboards and alerting (Grafana, Alertmanager).',
+    goodAt: ['Numeric time-series metrics (request rate, error rate, latency percentiles)', 'Alerting on those metrics', 'An enormous ecosystem of exporters for almost anything'],
+    badAt: ['High-cardinality data (careful with per-user labels — cardinality explosions are the classic Prometheus footgun)', 'Logs and traces — it\'s metrics-only'],
+    operationalCost: 'Moderate — storage grows with retention and cardinality; long-term retention typically needs a remote-write backend (Thanos, Mimir).',
+    useWhen: 'The default choice for infrastructure and application metrics plus alerting in almost any modern stack.',
+    realWorldExample: "Prometheus was built inside SoundCloud in 2012 because their existing monitoring couldn't keep up with a growing microservices architecture — it's now the default metrics stack for most Kubernetes deployments.",
+  },
+  {
+    slug: 'opentelemetry',
+    name: 'OpenTelemetry',
+    category: 'infra',
+    whatItIs: 'A vendor-neutral instrumentation standard for traces, metrics, and logs — the SDK/collector layer, not a storage backend itself.',
+    goodAt: ['Instrumenting once and exporting to any backend (Jaeger, Tempo, Datadog, etc.)', 'Avoiding vendor lock-in on your instrumentation layer'],
+    badAt: ['Being a complete solution by itself — you still need a backend to store and query what it collects', 'Silent overhead if you instrument too finely without sampling'],
+    operationalCost: 'Low — it\'s mostly library code plus an optional Collector process, not a heavy service.',
+    useWhen: 'Instrumenting a new microservices system for distributed tracing from day one, without betting the whole stack on one observability vendor.',
+    realWorldExample: 'OpenTelemetry formed by merging two earlier competing standards, OpenTracing and OpenCensus — backed separately by companies including Google, Uber, and Lightstep — specifically so instrumentation would not permanently fragment across two incompatible ecosystems.',
+  },
+  {
+    slug: 'airflow-temporal',
+    name: 'Airflow / Temporal',
+    category: 'infra',
+    whatItIs: 'Workflow orchestrators. Airflow schedules and runs DAGs of batch tasks; Temporal provides durable execution for long-running, code-as-workflow business processes.',
+    goodAt: ['Airflow: scheduled batch/ETL pipelines with clear DAG visualization', 'Temporal: multi-step business processes (a payment saga, an order fulfillment flow) that must reliably resume after a crash, exactly where they left off'],
+    badAt: ['Airflow: long-lived stateful processes or sub-second latency work', 'Temporal: a steeper learning curve and a smaller ecosystem than Airflow\'s'],
+    operationalCost: 'Moderate for both — a scheduler/workers and a backing database are required either way.',
+    useWhen: 'Airflow for a nightly ETL pipeline; Temporal for a multi-day order-and-payment saga that must survive a crash mid-flow and resume exactly where it stopped.',
+    realWorldExample: "Airflow was built inside Airbnb in 2014 to manage its growing web of data pipelines; Temporal descends directly from Cadence, the workflow engine Uber built to reliably run its own trip and payment sagas.",
+  },
+  {
+    slug: 'spark-flink',
+    name: 'Spark / Flink',
+    category: 'infra',
+    whatItIs: 'Big-data processing engines. Spark is batch-first (with micro-batch streaming); Flink is streaming-first, processing events one at a time with low latency.',
+    goodAt: ['Spark: large batch ETL and ML jobs, ad-hoc analytics over huge datasets', 'Flink: low-latency stateful stream processing (real-time scoring, windowed aggregation) with strong exactly-once semantics'],
+    badAt: ['Spark: "streaming" is micro-batch, not true low-latency event-at-a-time processing', 'Flink: a smaller talent pool and more tuning of state backends'],
+    operationalCost: 'High — a real cluster (YARN/Kubernetes/standalone) either way.',
+    useWhen: 'Spark for a daily batch job computing recommendations from a data lake; Flink for real-time fraud scoring on every transaction as it arrives.',
+    realWorldExample: "Spark was built at UC Berkeley's AMPLab and now powers Databricks (founded by its original creators); Alibaba built an internal Flink fork called Blink for real-time search-ranking and inventory updates, and later contributed its optimizations back to Flink itself.",
+  },
+];
+
+export function getTool(slug: string): ToolEntry | undefined {
+  return TOOLS.find((t) => t.slug === slug);
+}
