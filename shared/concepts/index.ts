@@ -1974,6 +1974,296 @@ history.pop().undo();   // undo whatever the last command was, generically`,
     ],
     furtherReading: [{ label: 'Microsoft Learn — What is distributed tracing and telemetry correlation?', url: 'https://learn.microsoft.com/en-us/Azure/azure-monitor/app/distributed-trace-data' }],
   },
+
+  // ---------------------------------------------------------------- basics: choosing data stores
+  {
+    slug: 'when-to-choose-nosql',
+    title: 'When to prefer NoSQL over SQL',
+    category: 'data',
+    summary: 'Pick NoSQL when a specific, named pressure — write volume, flexible schema, known key-based access, or geo-distribution — outweighs the joins and transactions you give up.',
+    explanation:
+      "Start from SQL as the default and move away only when you can name the pressure that forces you. The honest reasons to prefer NoSQL are: (1) write or data volume beyond what one primary can absorb and you want sharding built in rather than bolted on; (2) access patterns that are known up front and key-based (get by user id, list by channel + time) so you never need ad-hoc joins; (3) genuinely variable or evolving record shapes (product catalogs where every category has different attributes); (4) a data shape that is natively not tabular — graphs, time series, or documents read and written as a unit; (5) multi-region active-active writes with single-digit-millisecond latency, which stores like DynamoDB and Cassandra are built around.\n\nThe reasons NOT to are just as important: you need multi-row ACID transactions (payments, inventory), you need to ask questions you haven't designed for (analytics, reporting, admin search), your data is highly relational, or your scale is simply modest — a single well-indexed Postgres handles thousands of writes per second and terabytes comfortably.\n\nA useful test: write down your top five queries. If each one is 'fetch/append by this key', NoSQL fits. If any needs 'join A with B filtered by C' or 'update these three records atomically', stay relational, or use NoSQL only for the slice that needs it.",
+    example:
+      "A chat app stores messages as (channel_id, timestamp) -> message. Reads are always 'latest N in a channel', writes are append-only and enormous. That fits Cassandra/DynamoDB perfectly: partition by channel, sort by time, no joins. The same company's billing, users and subscriptions stay in Postgres because they need transactions and ad-hoc reporting.",
+    interviewCue:
+      "Say the access pattern out loud before naming the database: 'Reads are key lookups and writes are huge and append-only, so a wide-column store; but orders and payments need transactions so those stay in Postgres.' Proposing both, scoped by need, signals maturity.",
+    pitfalls: [
+      "Choosing NoSQL because it 'scales' when current load fits comfortably on one SQL node — you pay the modeling and consistency cost for a problem you don't have.",
+      'Treating schema-less as schema-free: the schema moves into application code and every reader must handle every historical shape.',
+      'Forgetting secondary access paths. A key-value design that works for the main query becomes a full scan the first time product asks for a new filter.',
+    ],
+    furtherReading: [{ label: 'AWS — NoSQL vs. relational databases', url: 'https://aws.amazon.com/nosql/' }],
+  },
+  {
+    slug: 'when-to-choose-sql',
+    title: 'When to prefer SQL (relational) databases',
+    category: 'data',
+    summary: "Choose relational when data has real relationships, correctness matters more than raw write throughput, or you cannot predict tomorrow's queries.",
+    explanation:
+      "SQL earns its default status through three things: constraints (foreign keys, uniqueness, NOT NULL stop bad data at the door), transactions (several changes succeed or fail together), and the query planner (you describe what you want, add an index, and ad-hoc questions just work). That combination is why it fits money, orders, inventory, bookings, user accounts, and anything an admin or analyst will later want to slice in ways nobody planned.\n\nScale is a weaker argument against SQL than people assume. Vertical scaling, read replicas, partitioned tables and caching carry most products very far; beyond that, sharding middleware (Vitess) or distributed SQL (CockroachDB, Spanner, Aurora) keeps the relational model.\n\nThe real limits are a single primary's write throughput, geo-distributed multi-writer setups, and very high-cardinality, schema-flexible data. Those are the cases where you start looking elsewhere, usually for one part of the system rather than all of it.",
+    example:
+      "An e-commerce checkout: decrement stock, create the order, create line items and record the payment intent in one transaction. In Postgres this is a BEGIN/COMMIT with foreign keys keeping everything consistent. Doing the same across several DynamoDB items needs TransactWriteItems limits and careful modeling, and ad-hoc 'revenue by category last quarter' needs an export pipeline.",
+    interviewCue:
+      "For anything involving money, inventory or uniqueness guarantees, say 'relational with transactions' first and justify it by the invariant you must protect, then mention how you'd scale reads (replicas, cache) before reaching for sharding.",
+    pitfalls: [
+      "Declaring 'SQL doesn't scale' without numbers — a tuned primary plus replicas serves most products.",
+      'Skipping indexes and then blaming the database; a missing index is the most common SQL performance problem.',
+      'Storing large blobs or heavy event streams in the main relational DB where object storage or a log would be a better home.',
+    ],
+    furtherReading: [{ label: 'PostgreSQL — Transactions tutorial', url: 'https://www.postgresql.org/docs/current/tutorial-transactions.html' }],
+  },
+  {
+    slug: 'nosql-data-models',
+    title: 'NoSQL data models: key-value, document, wide-column, graph',
+    category: 'data',
+    summary: 'NoSQL is four or five different tools: pick the model that matches how your data is read, not the brand name.',
+    explanation:
+      "Key-value (Redis, DynamoDB in simple mode, Memcached): get/put by key, nothing else. Fastest and simplest; ideal for sessions, caches, feature flags, counters. You cannot query by value without building your own index.\n\nDocument (MongoDB, Firestore, CouchDB): JSON-like documents with nested fields and secondary indexes. Good when you read and write an entity as a unit (a product with its attributes and reviews) and shapes vary between records.\n\nWide-column (Cassandra, ScyllaDB, Bigtable, DynamoDB with sort keys): rows grouped by a partition key and sorted by a clustering key. Built for massive write throughput and range reads within one partition, such as 'messages in channel X, newest first'. You model one table per query.\n\nGraph (Neo4j, Neptune): nodes and edges with fast multi-hop traversal. Choose it when the question is the relationship itself: friends-of-friends, fraud rings, recommendation paths. In SQL these become recursive joins that degrade quickly with depth.\n\nSpecialised stores round this out: time-series, search (inverted index) and vector databases each optimise a different access shape.",
+    example:
+      "A social product might use Redis (key-value) for sessions and rate limits, MongoDB (document) for user profiles, Cassandra (wide-column) for the activity feed timeline, Neo4j (graph) for 'people you may know', and Postgres for billing.",
+    interviewCue:
+      "Name the model, then the access pattern that justifies it: 'timeline per user, newest first, huge writes: wide-column keyed by user_id with a time clustering key.'",
+    pitfalls: [
+      'Using a document store as a relational one — heavy cross-document references recreate joins in app code.',
+      'Choosing a graph database when the data is only shallow relationships a join handles fine.',
+      'Picking a wide-column store without knowing the queries; its tables are designed per query and are hard to reshape afterward.',
+    ],
+    furtherReading: [{ label: 'MongoDB — What is NoSQL?', url: 'https://www.mongodb.com/resources/basics/databases/nosql-explained' }],
+  },
+  {
+    slug: 'polyglot-persistence',
+    title: 'Polyglot persistence: using several datastores',
+    category: 'data',
+    summary: 'Different parts of a system have different access shapes, so mature systems combine a few stores, each doing what it is best at.',
+    explanation:
+      "Polyglot persistence means choosing the datastore per workload rather than forcing one database to do everything: relational for transactions, a cache for hot reads, a search index for text queries, object storage for blobs, a log or queue for events, a warehouse for analytics.\n\nThe cost is real: more systems to run, monitor, back up and secure, and data that now lives in more than one place. The rule is to keep one system of record per piece of data and make every other store a derived copy, fed by events or change data capture, that can be rebuilt from the source.\n\nStart with the fewest stores that work, and add one only when a specific query or load makes the current one a bad fit. Each addition should have a named reason.",
+    example:
+      "A marketplace keeps listings and orders in Postgres (system of record), streams changes via CDC to Elasticsearch for search and to a warehouse for analytics, caches hot listing pages in Redis, and stores images in S3. If Elasticsearch is lost, it is rebuilt from Postgres.",
+    interviewCue:
+      "When you introduce a second datastore, state which one is the source of truth and how the other is kept in sync (CDC, dual-write via outbox, async events) and what staleness is acceptable.",
+    pitfalls: [
+      'Dual-writing to two stores from application code with no outbox or CDC, which silently diverges after the first partial failure.',
+      'Adding a store for résumé reasons rather than a measured need.',
+      'Having no rebuild path for derived stores.',
+    ],
+    furtherReading: [{ label: 'Martin Fowler — Polyglot Persistence', url: 'https://martinfowler.com/bliki/PolyglotPersistence.html' }],
+  },
+  {
+    slug: 'oltp-vs-olap',
+    title: 'OLTP vs. OLAP (transactional vs. analytical databases)',
+    category: 'data',
+    summary: 'OLTP serves many small reads and writes to current data; OLAP scans huge volumes to answer aggregate questions. Do not run both on the same database.',
+    explanation:
+      "OLTP systems (Postgres, MySQL, DynamoDB) back the live product: row-oriented storage, indexes for point lookups, short transactions, milliseconds of latency, many concurrent users.\n\nOLAP systems (BigQuery, Snowflake, Redshift, ClickHouse) answer questions like 'revenue by region by week': column-oriented storage reads only the needed columns and compresses well, queries scan millions or billions of rows, and latency is seconds, not milliseconds. They are poor at single-row updates.\n\nRunning heavy analytical queries on the OLTP primary steals capacity from customers. The standard fix is to copy data into a warehouse via ETL/ELT or CDC. A data lake (object storage holding raw files) sits beside or under a warehouse for cheap, schema-on-read storage.",
+    example:
+      "A ride-hailing app's trips table lives in Postgres for live booking. Nightly (or streaming) pipelines copy it to BigQuery, where analysts compute 'average pickup time by city by hour' over billions of rows without touching production.",
+    interviewCue:
+      "If the prompt mentions reports, dashboards, or 'analytics', add a separate analytical store fed asynchronously and say why the OLTP database is not used for it.",
+    pitfalls: [
+      'Running dashboards directly against the production primary.',
+      'Using a warehouse as an application database; its row-level update and latency characteristics are wrong.',
+      'Forgetting freshness: pipelines mean analytical data lags production.',
+    ],
+    furtherReading: [{ label: 'Google Cloud — OLTP vs. OLAP', url: 'https://cloud.google.com/learn/what-is-oltp' }],
+  },
+  {
+    slug: 'search-engines-inverted-index',
+    title: 'Search engines & inverted indexes',
+    category: 'data',
+    summary: 'For full-text search, ranking and fuzzy matching, use a search engine (Elasticsearch/OpenSearch) built on an inverted index; keep the primary database as the source of truth.',
+    explanation:
+      "An inverted index maps each term to the list of documents containing it, so a query for 'red running shoes' intersects three short posting lists instead of scanning every row. Search engines add tokenisation, stemming, synonyms, typo tolerance, relevance scoring (BM25) and faceting on top.\n\nSQL LIKE '%term%' cannot use a normal B-tree index and scans the table; Postgres full-text search or trigram indexes are fine for modest needs, but dedicated engines win on relevance quality, scale and features like autocomplete and facets.\n\nSearch indexes are eventually consistent derived data: write to the primary store, then sync via CDC or events. They are not designed to be a system of record.",
+    example:
+      "A job board stores postings in Postgres. A CDC pipeline indexes them into Elasticsearch, where queries like 'backend engineer remote' with filters for salary and location return ranked, faceted results in tens of milliseconds.",
+    interviewCue:
+      "Whenever a requirement says 'search', say: separate search index, fed asynchronously from the source of truth, with a note on the indexing delay users will see.",
+    pitfalls: [
+      'Using the search engine as the primary store and losing data on reindex or cluster trouble.',
+      'Ignoring index lag: a user creates a record and does not find it immediately.',
+      'Over-sharding small indexes, wasting memory and slowing queries.',
+    ],
+    furtherReading: [{ label: 'Elastic — Documents and indices', url: 'https://www.elastic.co/guide/en/elasticsearch/reference/current/documents-indices.html' }],
+  },
+  {
+    slug: 'time-series-databases',
+    title: 'Time-series databases',
+    category: 'data',
+    summary: 'Metrics, sensor readings and events arrive in time order, rarely change, and are queried by time range; purpose-built stores compress and expire them efficiently.',
+    explanation:
+      "Time-series workloads are append-heavy, immutable, queried by recent ranges and aggregates (average per minute, p99 per hour), and eventually old enough to downsample or delete. Stores such as InfluxDB, TimescaleDB, Prometheus and ClickHouse partition by time, compress aggressively (delta encoding of timestamps and values), and provide built-in retention and rollups.\n\nA general-purpose database can do this at small scale, but index and storage overhead on billions of rows gets expensive. The design levers are tag cardinality (too many unique label values explodes the index), retention tiers (raw for days, 1-minute rollups for months), and write batching.",
+    example:
+      "A monitoring system stores CPU readings per host every 10 seconds. Raw points are kept 7 days, downsampled to 5-minute averages for 13 months, and dashboards query the rolled-up tier for long ranges.",
+    interviewCue:
+      "For metrics, IoT or logs, mention time-based partitioning, retention with downsampling, and the cardinality risk of tagging by a high-variance field like user id.",
+    pitfalls: [
+      'High-cardinality labels (user id, request id) that blow up the index.',
+      'Keeping raw data forever instead of rolling it up.',
+      'Updating historical points, which these stores are not optimised for.',
+    ],
+    furtherReading: [{ label: 'Prometheus — Data model', url: 'https://prometheus.io/docs/concepts/data_model/' }],
+  },
+  {
+    slug: 'redis-use-cases',
+    title: 'Redis & in-memory stores: what to use them for',
+    category: 'data',
+    summary: 'Redis is a fast in-memory data-structure server: ideal for caches, sessions, counters, leaderboards, locks and rate limits, but bounded by RAM and not a durable system of record.',
+    explanation:
+      "Redis keeps data in memory, so reads and writes take well under a millisecond. Its value is the data structures: strings and counters (INCR for rate limits), hashes (objects), lists (simple queues), sets (unique membership), sorted sets (leaderboards, time-ordered feeds), streams, and pub/sub.\n\nTypical roles: cache in front of a database, session store, rate limiter, leaderboard, distributed lock (with caveats), and short-lived queue. Persistence options (RDB snapshots, AOF log) exist but a Redis outage or failover can still lose recent writes, so keep the authoritative copy elsewhere unless you accept that.\n\nCapacity is limited by RAM, so set eviction policies (LRU/LFU) and TTLs, and shard with Redis Cluster when one node is not enough. It is single-threaded per shard for commands, which makes operations atomic but means one slow command blocks others.",
+    example:
+      "A game keeps a global leaderboard in a Redis sorted set: ZADD updates a score, ZREVRANGE 0 99 returns the top 100 in microseconds. Final results are persisted to Postgres at match end.",
+    interviewCue:
+      "When you add Redis, state its role (cache, counter, sorted set), the TTL/eviction behaviour, and what happens on a miss or an outage.",
+    pitfalls: [
+      'Treating Redis as the only copy of important data.',
+      'Unbounded keys without TTLs leading to memory exhaustion.',
+      'Running O(N) commands such as KEYS on a large production instance.',
+    ],
+    furtherReading: [{ label: 'Redis — Data types', url: 'https://redis.io/docs/latest/develop/data-types/' }],
+  },
+  {
+    slug: 'read-replicas-vs-sharding',
+    title: 'Read replicas vs. sharding: which scaling step when',
+    category: 'data',
+    summary: 'Replicas scale reads; sharding scales writes and total data size. Try cheaper steps first: indexes, caching, bigger box, replicas, then shard.',
+    explanation:
+      "Scale a database in escalating order of complexity. (1) Fix queries and indexes. (2) Add a cache for hot reads. (3) Scale vertically. (4) Add read replicas: copies that serve reads, scaling read throughput while one primary still takes all writes; replication lag means replica reads can be stale. (5) Partition large tables or archive old data. (6) Shard: split data across independent primaries by a shard key, which scales writes and storage but makes cross-shard joins, transactions and rebalancing hard.\n\nRead replicas fit read-heavy workloads (most products are 10:1 or more). Sharding is justified when write throughput or dataset size exceeds one machine even after the cheaper steps. Choosing the shard key is the critical decision: it must spread load evenly and keep common queries on one shard.",
+    example:
+      "A news site: 5,000 reads/s and 100 writes/s. Three read replicas plus a CDN handle it, no sharding needed. A messaging service at 200,000 writes/s needs sharding by conversation id.",
+    interviewCue:
+      "Do the arithmetic: 'reads are 50x writes, so replicas and a cache; I'd only shard if write QPS exceeds what one primary handles.' Then name the shard key and its hot-spot risk.",
+    pitfalls: [
+      'Jumping to sharding when replicas and caching would do.',
+      'Reading your own write from a lagging replica and showing the user stale data.',
+      'A shard key with skew (celebrity users, timestamps) producing hot partitions.',
+    ],
+    furtherReading: [{ label: 'PostgreSQL — High availability, load balancing, and replication', url: 'https://www.postgresql.org/docs/current/high-availability.html' }],
+  },
+  {
+    slug: 'id-generation-uuid-vs-autoincrement',
+    title: 'ID generation: auto-increment vs. UUID vs. Snowflake',
+    category: 'data',
+    summary: 'Auto-increment is simple but centralised and guessable; UUIDs need no coordination but index poorly unless time-ordered; Snowflake-style IDs are compact and roughly sortable.',
+    explanation:
+      "Auto-increment integers are small, ordered and index-friendly, but need a single authority (the database), reveal volume and can be enumerated by attackers, and become awkward with multiple writers or shards.\n\nRandom UUIDv4 values can be generated anywhere with no coordination, but are 128 bits and random, which scatters B-tree inserts and hurts write locality. Time-ordered variants (UUIDv7, ULID) keep uniqueness while sorting roughly by creation time.\n\nSnowflake-style IDs pack a timestamp, a machine id and a sequence into 64 bits: unique across nodes without coordination at request time, sortable by time, and compact. They depend on reasonably synchronised clocks and unique machine ids.\n\nPick by need: single database and simple app, auto-increment; many writers or client-generated ids, UUIDv7/ULID; high-volume distributed with sortable ids, Snowflake.",
+    example:
+      "Twitter introduced Snowflake because it needed tens of thousands of unique, roughly time-sortable ids per second across many machines without a central counter.",
+    interviewCue:
+      "When sharding, say you will not use per-shard auto-increment (collisions) and name a scheme such as Snowflake or UUIDv7, with the sortability and clock assumptions.",
+    pitfalls: [
+      'Exposing sequential ids publicly, enabling enumeration and leaking volume.',
+      'Random UUID primary keys on large InnoDB tables causing page splits and slow inserts.',
+      'Assuming clocks never go backwards in Snowflake-style generators.',
+    ],
+    furtherReading: [{ label: 'RFC 9562 — UUIDs (including UUIDv7)', url: 'https://www.rfc-editor.org/rfc/rfc9562' }],
+  },
+  {
+    slug: 'pagination-offset-vs-cursor',
+    title: 'Pagination: offset vs. cursor (keyset)',
+    category: 'networking',
+    summary: 'Offset pagination is easy but slow and unstable on big or changing data; cursor (keyset) pagination is fast and stable.',
+    explanation:
+      "Offset pagination (LIMIT 20 OFFSET 10000) makes the database read and discard the first 10,000 rows on every request, so deep pages get slower, and inserts or deletes between requests cause skipped or duplicated items.\n\nCursor (keyset) pagination remembers the last item seen and asks for rows after it: WHERE (created_at, id) < (:last_created_at, :last_id) ORDER BY created_at DESC, id DESC LIMIT 20. It uses an index, takes constant time at any depth, and is stable under concurrent writes. The cost is no 'jump to page 50' and a requirement for a deterministic, unique sort key (add id as tiebreaker).\n\nReturn an opaque cursor token to clients so the sort key encoding can change. Use offset only for small, mostly static data where page numbers matter.",
+    example:
+      "An activity feed API returns {items, next_cursor}. The client passes next_cursor to get the following page; infinite scroll stays fast at item 1,000,000 and never repeats an item when new posts arrive.",
+    interviewCue:
+      "For any feed or list endpoint, say 'cursor-based pagination on (timestamp, id)' and give the reason: constant cost and stability under writes.",
+    pitfalls: [
+      'Sorting on a non-unique column without a tiebreaker, dropping or repeating rows.',
+      'Offering total counts on huge tables, which forces expensive COUNT(*) scans.',
+      'Exposing raw cursors that clients start to depend on.',
+    ],
+    furtherReading: [{ label: 'Use The Index, Luke — Paging through results', url: 'https://use-the-index-luke.com/sql/partial-results/fetch-next-page' }],
+  },
+  {
+    slug: 'sync-vs-async-communication',
+    title: 'Synchronous vs. asynchronous communication',
+    category: 'architecture',
+    summary: 'Use synchronous calls when the caller needs the answer now; use asynchronous messaging when work can happen later, must survive failures, or should not couple services together.',
+    explanation:
+      "Synchronous (HTTP/gRPC request-response): simple to reason about and gives an immediate result or error, but couples availability and latency; if the downstream is slow or down, so is the caller, and chains of calls multiply failure probability.\n\nAsynchronous (queues, topics, events): the producer hands off a message and moves on. This absorbs spikes, lets consumers scale and fail independently, and enables retries and fan-out. The costs are eventual completion, harder debugging, the need for idempotent consumers, and handling duplicates and ordering.\n\nA practical rule: do in the request only what the user must see immediately (validate, charge, reserve), and push the rest (emails, thumbnails, analytics, search indexing) to a queue.",
+    example:
+      "Checkout calls the payment service synchronously because the user needs the result. After success it publishes an OrderPlaced event; email, inventory-sync and analytics consumers process it asynchronously, and a slow email provider no longer slows checkout.",
+    interviewCue:
+      "Mark which edges of your diagram are sync and which async, and justify each: 'the user waits on this, so sync; this can lag by seconds, so queue.'",
+    pitfalls: [
+      'Long synchronous call chains where one slow dependency stalls everything.',
+      'Async without idempotent consumers, so retries double-apply effects.',
+      'Using a queue where the user actually needs an immediate answer.',
+    ],
+    furtherReading: [{ label: 'Microsoft Azure Architecture Center — Messaging technology choices', url: 'https://learn.microsoft.com/en-us/azure/architecture/guide/technology-choices/messaging' }],
+  },
+  {
+    slug: 'polling-vs-webhooks-vs-push',
+    title: 'Polling vs. webhooks vs. server push',
+    category: 'networking',
+    summary: 'Polling asks repeatedly, webhooks let a server call you when something happens, and push (WebSocket/SSE) keeps a live channel to the client. Choose by who needs the update and how fast.',
+    explanation:
+      "Polling is the simplest: the client asks on an interval. It wastes requests when nothing changed and adds latency up to the interval, but works everywhere and is easy to scale and cache. Long polling holds the request open until data is ready, improving latency.\n\nWebhooks are server-to-server callbacks: the provider POSTs to your URL when an event occurs. They need a public endpoint, signature verification, retries with backoff, and idempotent handling because deliveries repeat.\n\nWebSockets and Server-Sent Events keep a connection open so the server pushes updates to browsers or apps instantly, at the price of stateful connections that must be load balanced and scaled.\n\nChoose polling for infrequent, tolerant-of-delay updates; webhooks for system integrations; push for real-time UX such as chat, live scores and collaboration.",
+    example:
+      "Stripe notifies your backend of a successful payment via webhook (server to server). Your web app then pushes 'payment confirmed' to the user's open tab over a WebSocket, rather than the page polling every second.",
+    interviewCue:
+      "State the freshness requirement first. 'Seconds is fine, so polling every 5s is simplest' is a legitimate answer; do not reflexively add WebSockets.",
+    pitfalls: [
+      'Accepting webhooks without verifying signatures.',
+      'Not handling duplicate or out-of-order webhook deliveries.',
+      'Polling aggressively at scale and DDoS-ing your own API.',
+    ],
+    furtherReading: [{ label: 'Stripe — Webhooks', url: 'https://docs.stripe.com/webhooks' }],
+  },
+  {
+    slug: 'connection-pooling',
+    title: 'Connection pooling',
+    category: 'data',
+    summary: 'Opening a database connection is expensive and databases cap how many they accept; a pool reuses a small set of connections across many requests.',
+    explanation:
+      "Each database connection costs memory and a process or thread on the server (in Postgres, a whole backend process), plus setup time for TCP, TLS and authentication. Databases therefore allow only hundreds of connections, while an app fleet can easily want thousands.\n\nA pool keeps a bounded set of open connections that requests borrow and return. Size it by what the database can actually run in parallel (roughly cores times a small factor), not by how many requests are in flight; extra requests wait in the pool queue. External poolers such as PgBouncer or RDS Proxy sit between many app instances and the database and are especially important with serverless functions, which otherwise open a new connection per invocation.\n\nWatch for leaked connections (never returned), long transactions that hold connections, and transaction-mode pooling that breaks session-level features.",
+    example:
+      "200 app pods each with a pool of 20 would open 4,000 Postgres connections and exhaust it. Putting PgBouncer in front, with 100 server connections shared by all pods, keeps the database healthy.",
+    interviewCue:
+      "With serverless or many small instances talking to a relational DB, mention a connection pooler/proxy to avoid exhausting database connections.",
+    pitfalls: [
+      'Oversizing pools so the database spends its time context-switching.',
+      'Leaking connections on error paths so the pool silently drains.',
+      'Serverless functions each opening direct connections with no proxy.',
+    ],
+    furtherReading: [{ label: 'PgBouncer — Features', url: 'https://www.pgbouncer.org/features.html' }],
+  },
+  {
+    slug: 'sql-joins-and-query-basics',
+    title: 'SQL fundamentals: joins, GROUP BY, and reading query plans',
+    category: 'data',
+    summary: 'Know what each join returns, how aggregates work, and how to use EXPLAIN to see whether a query uses an index or scans the table.',
+    explanation:
+      "INNER JOIN returns rows with a match in both tables; LEFT JOIN keeps all left rows and fills NULLs where nothing matches (use it for 'customers including those with no orders'); FULL OUTER keeps both sides; CROSS JOIN is every combination. GROUP BY collapses rows into groups for aggregates (COUNT, SUM, AVG); WHERE filters before grouping, HAVING filters groups after.\n\nPerformance depends on the plan. EXPLAIN (ANALYZE) shows whether the database used an index scan or a sequential scan, the join algorithm (nested loop, hash, merge), and estimated vs actual row counts. Common fixes are adding an index on join and filter columns, avoiding functions on indexed columns in WHERE (which defeats the index), selecting only needed columns, and fixing stale statistics.\n\nN+1 queries, where code loads a list and then queries once per item, are fixed by a join or a single IN query.",
+    example:
+      "'Orders per customer in the last 30 days' is a LEFT JOIN from customers to orders with the date filter in the ON clause, grouped by customer. EXPLAIN shows a sequential scan on orders; adding an index on (customer_id, created_at) turns it into an index scan.",
+    interviewCue:
+      "When discussing data access, mention the index that supports the hot query and call out N+1 patterns by name if the API design invites them.",
+    pitfalls: [
+      'Filtering a LEFT JOIN in WHERE, which silently turns it into an inner join.',
+      'Wrapping an indexed column in a function (LOWER(email)) without a matching expression index.',
+      'N+1 queries from ORMs lazily loading relations in a loop.',
+    ],
+    furtherReading: [{ label: 'PostgreSQL — Using EXPLAIN', url: 'https://www.postgresql.org/docs/current/using-explain.html' }],
+  },
+  {
+    slug: 'base-and-eventual-consistency-in-practice',
+    title: 'BASE and living with eventual consistency',
+    category: 'foundations',
+    summary: 'BASE (Basically Available, Soft state, Eventually consistent) is the trade many NoSQL systems make; the skill is deciding which user-facing reads can tolerate staleness.',
+    explanation:
+      "ACID favours correctness at every step; BASE favours availability and scale, letting replicas converge over time. Eventual consistency is acceptable for many reads (like counts, feeds, search results, recommendations) and unacceptable for others (account balance, seat availability, permissions).\n\nTechniques to live with it: read-your-writes by routing a user's reads to the primary or a session-pinned replica after they write; idempotent, commutative updates so order does not matter; conflict resolution (last-write-wins, CRDTs, or app-level merge); and showing optimistic UI while the write propagates.\n\nDesign by classifying each read: must it be strongly consistent, or is a few seconds of staleness invisible to the user? Pay for strong consistency only where the answer is yes.",
+    example:
+      "After posting a comment, the author sees it immediately (read from primary / local state) while other users may see it a second later from a replica. Nobody notices. A bank balance shown after a transfer must come from the authoritative source.",
+    interviewCue:
+      "Per feature, say whether staleness is OK and for how long: 'like counts can lag by seconds; inventory at checkout must be strongly consistent.'",
+    pitfalls: [
+      'Applying eventual consistency to money or uniqueness invariants.',
+      'Not providing read-your-writes, so users think their action failed and retry.',
+      'Last-write-wins on concurrent edits silently discarding data.',
+    ],
+    furtherReading: [{ label: 'Werner Vogels — Eventually Consistent', url: 'https://www.allthingsdistributed.com/2008/12/eventually_consistent.html' }],
+  },
 ];
 
 export function getConcept(slug: string): Concept | undefined {
